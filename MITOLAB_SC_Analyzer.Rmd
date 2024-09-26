@@ -1,0 +1,718 @@
+---
+title: "MITO_SC"
+author: "Justin H. Lau"
+date: "2024-08-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Install Libraries (First Time Only)
+```{r, include-F}
+suppressMessages(
+  {
+    # List of required CRAN/Bioconductor packages
+    cran_packages <- c("dplyr", "Seurat", "patchwork", "tibble", "scCustomize", "presto", 
+                       "gdata", "stringr", "ggplot2", "cowplot", "magick", "shiny", 
+                       "bslib", "tidyverse", "plotly", "shinythemes", "shinyFiles", 
+                       "Matrix", "reticulate", "viridis", "RColorBrewer", "xlsx")
+    
+    # Bioconductor packages
+    bioc_packages <- c("EnsDb.Hsapiens.v75", "Signac")
+    
+    # Packages from GitHub or other remote repositories
+    remote_packages <- c("DoubletFinder", "monocle3")
+    
+    # Function to install missing CRAN/Bioconductor packages
+    install_if_missing <- function(pkg){
+      if (!require(pkg, character.only = TRUE)){
+        install.packages(pkg, dependencies = TRUE)
+      }
+    }
+    
+    # Install CRAN packages
+    lapply(cran_packages, install_if_missing)
+    
+    # Install Bioconductor packages
+    if (!requireNamespace("BiocManager", quietly = TRUE)) {
+      install.packages("BiocManager")
+    }
+    BiocManager::install(bioc_packages)
+    
+    # Install 'devtools' or 'remotes' if not installed
+    if (!require("remotes")) {
+      install.packages("remotes")
+    }
+    
+    # Install remote packages from GitHub
+    remotes::install_github("chris-mcginnis-ucsf/DoubletFinder")
+    remotes::install_github("cole-trapnell-lab/monocle3")
+
+  }
+)
+```
+
+
+
+## Load Libraries
+
+```{r, include=F}
+suppressMessages(
+  {
+    library(dplyr)
+    library(Seurat)
+    library(patchwork)
+    library(tibble)
+    library(DoubletFinder)
+    library(scCustomize)
+    library(presto)
+    library(gdata)
+    library(stringr)
+    library(ggplot2)
+    library(EnsDb.Hsapiens.v75)
+    library(Signac)
+    library(monocle3)
+    library(xlsx)
+    library(cowplot)
+    library(magick)
+    library(shiny)
+    library(bslib)
+    library(tidyverse)
+    library(plotly)
+    library(shinythemes)
+    library(shinyFiles)
+    library(Matrix)
+    library(reticulate)
+    library(viridis)
+    library(RColorBrewer)
+  }
+)
+```
+
+#### MITO Lab SC Explorer Data Dependencies
+```{r}
+# LOAD DATASETS ----
+#data_list = list(
+  #"hFAPs" = SMG_FAP,
+ # "Human Muscle Cells" = SMG_HETERO,
+ # "Mouse IRI Cells" = iri_integrated,
+ # "Mouse DMD FAPs" =  dmd_integrated
+#)
+
+#dataset <- names(data_list)
+species <- c("human", "mouse")
+initial_idents <- c('RNA_snn_res.0.8','RNA_snn_res.1','RNA_snn_res.1.2','RNA_snn_res.1.4','RNA_snn_res.1.6','integrated_snn_res.0.8','integrated_snn_res.1','integrated_snn_res.1.2','integrated_snn_res.1.4','integrated_snn_res.1.6', 'celltype','celltype_v1','celltype_v2','celltype_v3','celltype_v4','celltype_v5','celltype_v6', "orig.ident")
+final_idents <- c('celltype','adjusted_celltype','celltype_v1','celltype_v2','celltype_v3','celltype_v4','celltype_v5','celltype_v6', "DE")
+celltypes <- c("General Muscle Panel", "FAP Subpopulations", "FAPs", "Satellite Cells", "Endothelial Cells", "Fibroblasts", "Pericytes", "Macrophages", "T-Cells", "B-Cells")
+
+
+
+```
+
+#### MITO LAB SC Explorer Functions
+```{r}
+generate_feature_plot <- function(celltype_choice, species_choice, data_set) {
+  h_features <- switch(celltype_choice,
+                     "General Muscle Panel" = c('PDGFRA', 'CD34', 'PAX7', 'PECAM1', 'ACTA2', 'RGS5', 'CD55', 'PTPRC', 'MRC1', 'CD3E', 'CD4'),
+                     "FAP Subpopulations" = c('PDGFRA', 'CD55', 'ATF3', 'DLK1', 'MME', 'LAMA2', 'CD74', 'GLI1','OSR1', 'MYL9', 'COMP', 'PIEZO2', "POSTN", "ACAN"),
+                     "FAPs" = c('CD34', 'PDGFRA'),
+                     "Satellite Cells" = c('PAX7'),
+                     "Endothelial Cells" = c('PECAM1', 'CD34'),
+                     "Fibroblasts" = c('COL1A1', 'ACTA2', 'CD55'),
+                     "Pericytes" = c('ACTA2', 'RGS5'),
+                     "Macrophages" = c('PTPRC', 'MRC1'),
+                     "T-Cells" = c('CD3E', 'CD4'),
+                     "B-Cells" = NULL)
+  m_features <- switch(celltype_choice,
+                     "General Muscle Panel" = c('Pdgfra', 'Cd34', 'Pax7', 'Pecam1', 'Acta2', 'Rgs5', 'Cd55', 'Ptprc', 'Mrc1', 'Cd3e', 'Cd4'),
+                     "FAP Subpopulations" = c('Pdgfra', 'Cd55', 'Atf3', 'Dlk1', 'Mme', 'Lama2', 'Cd74', 'Gli1','Osr1','Myl9', 'Comp', 'Piezo2', "Postn", "Acan"),
+                     "FAPs" = c('Cd34', 'Pdgfra'),
+                     "Satellite Cells" = c('Pax7'),
+                     "Endothelial Cells" = c('Pecam1', 'Cd34'),
+                     "Fibroblasts" = c('Col1a1', 'Acta2', 'Cd55'),
+                     "Pericytes" = c('Acta2', 'Rgs5'),
+                     "Macrophages" = c('Ptprc', 'Mrc1'),
+                     "T-Cells" = c('Cd3e', 'Cd4'),
+                     "B-Cells" = NULL)
+  
+  if (species_choice == 'human') {
+    FeaturePlot_scCustom(data_set, features = h_features, colors_use = c('cadetblue1','firebrick4'))
+  } else if (species_choice == 'mouse') {
+    FeaturePlot_scCustom(data_set, features = m_features, colors_use = c('cadetblue1','firebrick4'))
+  }
+}
+```
+
+### MITO LAB SC Analyzer
+
+```{r}
+ui <- navbarPage(
+  title = "MITO LAB SC Analyzer",
+  theme = shinytheme("flatly"),
+  
+  tabPanel(
+    title = "Rename Cell Clusters",
+    
+    sidebarLayout(
+      sidebarPanel(
+        width = 4,
+        h1("Import a Dataset"),
+        shiny::fileInput("upload", "Import Seurat Object", accept = ".rds"),
+        shiny::selectInput(
+          inputId = "species_choice_explore",
+          label   = "Species",
+          choices = species
+        ),
+        shiny::selectInput(
+          inputId = "celltype_choice",
+          label   = "Celltypes",
+          choices = celltypes
+        ),
+        actionButton("explore_celltype", "Look Up"),
+        shiny::textInput(
+          inputId = "gene_choice_explore",
+          label = "Genes (comma separated)"
+        ),
+        shiny::textInput(
+          inputId = "n_col_explore",
+          label = "Number of Columns"
+        ),
+        actionButton("lookup_gene", "Explore Genes"),
+        
+        shiny::selectInput(
+          inputId = "ident_rename",
+          label   = "Select resolution to recluster",
+          choices = initial_idents),
+        actionButton("select", "Select Resolution"),
+        shiny::uiOutput("identity_inputs"),
+        shiny::selectInput(
+          inputId = "ident_new",
+          label   = "Select name for new identity",
+          choices = final_idents),
+        textInput(
+          inputId = "path_save",
+          label = 'Project name (should match the project folder in the MITO_LAB_SC folder) **Do not put a space at the end**'
+        ),
+        textInput(
+          inputId = "obj_save",
+          label = "Name of new object"
+        ),
+        actionButton("rename", "Rename Clusters and Save")
+      ),
+      
+      mainPanel(
+        h1("FeaturePlot"),
+        plotOutput('featureplot_known', height = 1000, width = 1500),
+        h1('Gene Exploration'),
+        h3("FeaturePlot"),
+        plotOutput("featureplot_explore", height = 500),
+        h1("UMAP"),
+        plotOutput("umap_plot"),
+        plotOutput("umap_plot_new"),
+        plotOutput("heat_plot_new")
+    )
+  )
+),
+tabPanel(
+    title = "Convert to H5AD",
+    
+    sidebarLayout(
+      sidebarPanel(
+        h1("Import a Dataset"),
+        shiny::fileInput("upload_convert", "Import Seurat Object to convert to H5AD", accept = ".rds"),
+        textInput(
+          inputId = "folder_convert",
+          label = 'Project name (should match the project folder in the MITO_LAB_SC folder) **Do not put a space at the end**'
+        ),
+        textInput(
+          inputId = "obj_convert",
+          label = 'Name of Object **Do not put a space at the end**'
+        ),
+        actionButton("convert_dep", "Create Dependencies")
+    ),
+    
+    mainPanel(
+      
+    )
+    
+)),
+tabPanel(
+  title = "Differential Gene Expression Analysis",
+  sidebarLayout(
+    sidebarPanel(
+      h1("Import a Dataset"),
+      shiny::fileInput("upload_de", "Import Seurat Object", accept = ".rds"),
+      actionButton("reset", "Reset to orig.ident"),
+      shiny::uiOutput("identity_inputs_de"),
+      shiny::textInput(
+          inputId = "ident_new_de",
+          label   = "Group Name"
+          ),
+      textInput(
+          inputId = "folder_de",
+          label = 'Project name (should match the project folder in the MITO_LAB_SC folder) **Do not put a space at the end**'
+        ),
+      textInput(
+          inputId = "obj_save_de",
+          label = 'Name of Object **Do not put a space at the end**'
+        ),
+      actionButton("rename_de", "Rename orig.ident"),
+      shiny::textInput(
+        inputId = "de_ident_1",
+        label = "Name of Identity 1"
+      ),
+      shiny::textInput(
+        inputId = "de_ident_2",
+        label = "Name of Identity 2"
+      ),
+      
+      actionButton("de_analysis", "Conduct DE")
+      ),
+    mainPanel(
+      h1("UMAP by Experimental Groups"),
+      plotOutput("umap_plot_new_de")
+      #volcano plot
+      #violin plot
+    )
+  )
+),
+tabPanel(
+  title = "Plots",
+  sidebarLayout(
+    sidebarPanel(
+      h1("Import a Dataset"),
+      shiny::fileInput("upload_plot", "Import Seurat Object", accept = ".rds"),
+      shiny::selectInput(
+          inputId = "ident_plot",
+          label   = "Select identity for plots",
+          choices = final_idents),
+      textInput(
+          inputId = "folder_plot",
+          label = 'Project name (should match the project folder in the MITO_LAB_SC folder) **Do not put a space at the end**'
+        ),
+      textInput(
+          inputId = "obj_save_plot",
+          label = 'Name of Object **Do not put a space at the end**'
+        ),
+      actionButton("plot", "Plot"),
+      ),
+    mainPanel(
+      h1("General UMAP"),
+      plotOutput("general_umap_plot"),
+      h1("Stack"),
+      plotOutput("stack_plot")
+      
+      #violin plot
+    )
+  )
+)
+
+
+)
+
+server <- function(input, output, session) {
+  rv <- reactiveValues()
+####Gene Exploration + Renaming  
+  observeEvent(input$explore_celltype, {
+    rv$data_set_explore <- readRDS(input$upload$datapath)
+    
+  output$featureplot_known <- renderPlot({
+      generate_feature_plot(input$celltype_choice, input$species_choice_explore, rv$data_set_explore)
+    })
+  })
+  observeEvent(input$lookup_gene, {
+    genes <- unlist(strsplit(input$gene_choice_explore, ","))
+    genes <- trimws(genes)
+    
+    output$featureplot_explore <- renderPlot({
+      if (length(genes) > 0) {
+        FeaturePlot_scCustom(rv$data_set_explore, features = genes, colors_use = c('cadetblue1', 'firebrick4'), num_columns = as.numeric(input$n_col_explore))
+      }
+    })
+    
+    output$violinplot_explore <- renderPlot({
+      if (length(genes) > 0) {
+        VlnPlot_scCustom(rv$data_set_explore, features = genes, 
+                         num_columns = as.numeric(input$n_col_explore))
+      }
+    })
+  })
+  observeEvent(input$select,{
+      obj <- readRDS(input$upload$datapath)
+
+      output$umap_plot <- renderPlot({
+        DimPlot_scCustom(obj, label = T, figure_plot = T, group.by = input$ident_rename)
+      })
+      
+      # Pull the identities from the selected resolution
+      identities <- levels(obj@meta.data[[input$ident_rename]])
+    
+      # Create dynamic text inputs for each identity
+      output$identity_inputs <- renderUI({
+        identity_inputs <- lapply(identities, function(identity) {
+          textInput(inputId = paste0("identity_", identity), label = paste0("Rename identity: ", identity), value = identity)
+        })
+      do.call(tagList, identity_inputs)
+    })
+  })
+
+  observeEvent(input$rename,{
+      desktop_path <- file.path(Sys.getenv("HOME"), "Desktop")
+      mitolab_folder_name <- "MITO_LAB_SC"
+      obj_folder_name <- "objects"
+      
+      mitolab_folder_path <- file.path(desktop_path, mitolab_folder_name)
+      
+      if (!dir.exists(mitolab_folder_path)) {
+        dir.create(mitolab_folder_path)
+        message("Folder 'MITO_LAB_SC' has been created on the desktop.")
+      } else {
+        message("Folder 'MITO_LAB_SC' already exists on the desktop.")
+      }      
+      
+      project_folder_path <- file.path(mitolab_folder_path,input$path_save)
+      
+      if (!dir.exists(project_folder_path)) {
+        dir.create(project_folder_path)
+        message(paste("Subfolder",input$path_save,"has been created inside 'MITO_LAB_SC'."))
+      } else {
+        message(paste("Subfolder",input$path_save, "already exists inside 'MITO_LAB_SC'."))
+      }
+      
+      
+      obj_folder_path <- file.path(project_folder_path, obj_folder_name)
+      
+      if (!dir.exists(obj_folder_path)) {
+        dir.create(obj_folder_path)
+        message("Subfolder 'objects' has been created inside 'MITO_LAB_SC'.")
+      } else {
+        message("Subfolder 'objects' already exists inside 'MITO_LAB_SC'.")
+      }
+      
+      obj <- readRDS(input$upload$datapath)
+      
+      # Collect the new identity names from the input fields
+      identities <- levels(obj@meta.data[[input$ident_rename]])
+      new_identities <- sapply(identities, function(identity) {
+      input[[paste0("identity_", identity)]] %||% identity
+    })
+
+      # Create a named vector for the new identities
+      new_identity_names <- setNames(new_identities, identities)
+      # Copy the original resolution to the new metadata column
+      obj@meta.data[[input$ident_new]] <- obj@meta.data[[input$ident_rename]]
+      
+      # Convert metadata to character to avoid factor level issues
+      obj@meta.data[[input$ident_new]] <- as.character(obj@meta.data[[input$ident_new]])
+      
+      # Map the original identities to new names
+      obj@meta.data[[input$ident_new]] <- new_identity_names[obj@meta.data[[input$ident_new]]]
+      
+      # Ensure that all new identities are accounted for in metadata
+      obj@meta.data[[input$ident_new]] <- factor(obj@meta.data[[input$ident_new]], levels = unique(new_identities))
+      
+      filename <- paste0("~/Desktop/MITO_LAB_SC/",input$path_save,"/objects/",input$obj_save,".rds")
+      # Try saving the updated Seurat object
+      tryCatch({
+        saveRDS(obj, file = filename)
+        shiny::showNotification(paste("Seurat object has been successfully saved as:", paste0(input$obj_save,".rds")), type = "message")
+      }, error = function(e) {
+        shiny::showNotification(paste("Error saving Seurat object:", e$message), type = "error")
+      })
+      
+      Idents(obj) <- input$ident_new
+      DefaultAssay(obj) <- 'RNA'
+      
+      markers <- FindAllMarkers(obj, only.pos = TRUE)
+        markers %>%
+          group_by(cluster) %>%
+          dplyr::filter(avg_log2FC > 1) %>%
+          slice_head(n = 10) %>%
+          ungroup() -> top10
+      
+      output$umap_plot_new <- renderPlot({
+        DimPlot_scCustom(obj, label = TRUE, figure_plot = TRUE, group.by = input$ident_new)
+      
+      })
+      
+      output$heat_plot_new <- renderPlot({
+        DoHeatmap(obj, group.by = input$ident_new, features = top10$gene) + NoLegend()
+      
+      })
+      })
+
+####Conversion    
+  observeEvent(input$convert_dep,{
+    desktop_path <- file.path(Sys.getenv("HOME"), "Desktop")
+      mitolab_folder_name <- "MITO_LAB_SC"
+      conv_folder_name <- "conversions"
+      
+      mitolab_folder_path <- file.path(desktop_path, mitolab_folder_name)
+      
+      if (!dir.exists(mitolab_folder_path)) {
+        dir.create(mitolab_folder_path)
+        message("Folder 'MITO_LAB_SC' has been created on the desktop.")
+      } else {
+        message("Folder 'MITO_LAB_SC' already exists on the desktop.")
+      }      
+      
+      project_folder_path <- file.path(mitolab_folder_path,input$folder_convert)
+      
+      if (!dir.exists(project_folder_path)) {
+        dir.create(project_folder_path)
+        message(paste("Subfolder",input$folder_convert,"has been created inside 'MITO_LAB_SC'."))
+      } else {
+        message(paste("Subfolder",input$folder_convert, "already exists inside 'MITO_LAB_SC'."))
+      }
+      
+      
+      conv_folder_path <- file.path(project_folder_path,conv_folder_name)
+      
+      if (!dir.exists(conv_folder_path)) {
+        dir.create(conv_folder_path)
+        message(paste("Subfolder 'conversions' has been created inside",input$folder_convert))
+      } else {
+        message(paste("Subfolder 'conversions' already exists inside",input$folder_convert))
+      }
+    
+      obj_conv_folder_path <- file.path(conv_folder_path, input$obj_convert)
+      
+      if (!dir.exists(obj_conv_folder_path)) {
+        dir.create(obj_conv_folder_path)
+        message(paste("Subfolder", input$obj_convert, "has been created inside 'conversions'."))
+      } else {
+        message(paste("Subfolder", input$obj_convert, "has been created inside 'conversions'."))
+      }
+    
+    obj <- readRDS(input$upload_convert$datapath)
+    
+    #obj <- Replace_Suffix(obj, current_suffix = "-1", new_suffix = "")
+    #obj <- JoinLayers(obj)
+
+    counts_matrix <- obj[["RNA"]]$counts
+    writeMM(counts_matrix, file=paste0(file=file.path(obj_conv_folder_path,'matrix.mtx')))
+
+# write dimensional reduction matrix (PCA)
+    write.csv (obj@reductions$pca@cell.embeddings, 
+              file=file.path(obj_conv_folder_path,'pca.csv'), quote=F, row.names=F)
+
+
+    # write gene names
+    write.table(data.frame('gene'=rownames(counts_matrix)),
+            file=file.path(obj_conv_folder_path,'gene_names.csv'),
+            quote=F,row.names=F,col.names=F)
+
+    # save metadata table:
+    obj$barcode <- colnames(obj)
+    obj$UMAP_1 <- obj@reductions$umap@cell.embeddings[,1]
+    obj$UMAP_2 <- obj@reductions$umap@cell.embeddings[,2]
+    write.csv(obj@meta.data, file=file.path(obj_conv_folder_path, 'metadata.csv'), quote=F, row.names=F)
+  })
+
+### Differential Gene Expression Analysis
+  observeEvent(input$reset, {
+    obj <- readRDS(input$upload_de$datapath)
+    
+    # Pull the identities from the selected resolution
+    identities <- unique(obj@meta.data[["orig.ident"]])
+    print(identities)
+      # Create dynamic text inputs for each identity
+    output$identity_inputs_de <- renderUI({
+      identity_inputs_de <- lapply(identities, function(identity) {
+        textInput(inputId = paste0("identity_", identity), label = paste0("Rename identity: ", identity), value = identity)
+        })
+    do.call(tagList, identity_inputs_de)
+  })
+})
+  observeEvent(input$rename_de,{
+    desktop_path <- file.path(Sys.getenv("HOME"), "Desktop")
+      mitolab_folder_name <- "MITO_LAB_SC"
+      obj_folder_name <- "objects"
+      
+      mitolab_folder_path <- file.path(desktop_path, mitolab_folder_name)
+      if (!dir.exists(mitolab_folder_path)) {
+        dir.create(mitolab_folder_path)
+        message("Folder 'MITO_LAB_SC' has been created on the desktop.")
+      } else {
+        message("Folder 'MITO_LAB_SC' already exists on the desktop.")
+      }      
+      
+      project_folder_path <- file.path(mitolab_folder_path,input$folder_de)
+      if (!dir.exists(project_folder_path)) {
+        dir.create(project_folder_path)
+        message(paste("Subfolder",input$folder_de,
+                      "has been created inside 'MITO_LAB_SC'."))
+      } else {
+        message(paste("Subfolder",input$folder_de, 
+                      "already exists inside 'MITO_LAB_SC'."))
+      }
+      
+      obj_folder_path <- file.path(project_folder_path, obj_folder_name)
+      if (!dir.exists(obj_folder_path)) {
+        dir.create(obj_folder_path)
+        message("Subfolder 'objects' has been created inside 'MITO_LAB_SC'.")
+      } else {
+        message("Subfolder 'objects' already exists inside 'MITO_LAB_SC'.")
+      }
+      
+      obj <- readRDS(input$upload_de$datapath)
+      
+      # Collect the new identity names from the input fields
+      identities <- unique(obj@meta.data[["orig.ident"]])
+      new_identities <- sapply(identities, function(identity) {
+      input[[paste0("identity_", identity)]] %||% identity
+    })
+
+      # Create a named vector for the new identities
+      new_identity_names <- setNames(new_identities, identities)
+      # Copy the original resolution to the new metadata column
+      obj@meta.data[[input$ident_new_de]] <- obj@meta.data[["orig.ident"]]
+      
+      # Convert metadata to character to avoid factor level issues
+      obj@meta.data[[input$ident_new_de]] <- as.character(obj@meta.data[[input$ident_new_de]])
+      
+      # Map the original identities to new names
+      obj@meta.data[[input$ident_new_de]] <- new_identity_names[obj@meta.data[[input$ident_new_de]]]
+      
+      # Ensure that all new identities are accounted for in metadata
+      obj@meta.data[[input$ident_new_de]] <- factor(obj@meta.data[[input$ident_new_de]], levels = unique(new_identities))
+      
+      filename <- paste0("~/Desktop/MITO_LAB_SC/",input$folder_de,"/objects/",input$obj_save_de,".rds")
+      # Try saving the updated Seurat object
+      tryCatch({
+        saveRDS(obj, file = filename)
+        shiny::showNotification(paste("Seurat object has been successfully saved as:", paste0(input$obj_save_de,".rds")), type = "message")
+      }, error = function(e) {
+        shiny::showNotification(paste("Error saving Seurat object:", e$message), type = "error")
+      })
+      ######## Plots
+      Idents(obj) <- input$ident_new_de
+      DefaultAssay(obj) <- 'RNA'
+      
+      markers <- FindAllMarkers(obj, only.pos = TRUE)
+        markers %>%
+          group_by(cluster) %>%
+          dplyr::filter(avg_log2FC > 1) %>%
+          slice_head(n = 10) %>%
+          ungroup() -> top10
+      
+      output$umap_plot_new_de <- renderPlot({
+        DimPlot_scCustom(obj, label = TRUE, figure_plot = TRUE, group.by = input$ident_new_de)
+      
+      })
+  })
+  observeEvent(input$de_analysis,{
+      desktop_path <- file.path(Sys.getenv("HOME"), "Desktop")
+      mitolab_folder_name <- "MITO_LAB_SC"
+      de_folder_name <- "DE"
+      
+      mitolab_folder_path <- file.path(desktop_path, mitolab_folder_name)
+      if (!dir.exists(mitolab_folder_path)) {
+        dir.create(mitolab_folder_path)
+        message("Folder 'MITO_LAB_SC' has been created on the desktop.")
+      } else {
+        message("Folder 'MITO_LAB_SC' already exists on the desktop.")
+      }      
+      
+      project_folder_path <- file.path(mitolab_folder_path,input$folder_de)
+      if (!dir.exists(project_folder_path)) {
+        dir.create(project_folder_path)
+        message(paste("Subfolder",input$folder_de,
+                      "has been created inside 'MITO_LAB_SC'."))
+      } else {
+        message(paste("Subfolder",input$folder_de, 
+                      "already exists inside 'MITO_LAB_SC'."))
+      }
+      
+      de_folder_path <- file.path(project_folder_path, de_folder_name)
+      if (!dir.exists(de_folder_path)) {
+        dir.create(de_folder_path)
+        message("Subfolder 'DE' has been created inside 'MITO_LAB_SC'.")
+      } else {
+        message("Subfolder 'DE' already exists inside 'MITO_LAB_SC'.")
+      }
+      
+      obj <- readRDS(paste0("~/Desktop/MITO_LAB_SC/",input$folder_de,"/objects/",input$obj_save_de,".rds"))
+      
+      Idents(obj) <- input$ident_new_de
+      DefaultAssay(obj) <- 'RNA'
+      
+      obj_de <- FindMarkers(obj, ident.1 = input$de_ident_1, ident.2 = input$de_ident_2, verbose = FALSE)
+      
+      de_filename <- paste0("~/Desktop/MITO_LAB_SC/",input$folder_de,"/DE/",input$obj_save_de,"_",input$de_ident_1,"_",input$de_ident_2,"_de.csv")
+      
+      tryCatch({
+        write.csv(obj_de, file = de_filename)
+        shiny::showNotification(paste("Seurat object has been successfully saved as:", paste0(input$obj_save_de,"_",input$de_ident_1,"_",input$de_ident_2,"_de.csv")), type = "message")
+      }, error = function(e) {
+        shiny::showNotification(paste("Error saving Seurat object:", e$message), type = "error")
+      })
+      
+      
+      
+
+  
+  })
+### Plot
+  observeEvent(input$plot,{
+    desktop_path <- file.path(Sys.getenv("HOME"), "Desktop")
+      mitolab_folder_name <- "MITO_LAB_SC"
+      plot_folder_name <- "plot"
+      
+      mitolab_folder_path <- file.path(desktop_path, mitolab_folder_name)
+      if (!dir.exists(mitolab_folder_path)) {
+        dir.create(mitolab_folder_path)
+        message("Folder 'MITO_LAB_SC' has been created on the desktop.")
+      } else {
+        message("Folder 'MITO_LAB_SC' already exists on the desktop.")
+      }      
+      
+      project_folder_path <- file.path(mitolab_folder_path,input$folder_plot)
+      if (!dir.exists(project_folder_path)) {
+        dir.create(project_folder_path)
+        message(paste("Subfolder",input$folder_plot,
+                      "has been created inside 'MITO_LAB_SC'."))
+      } else {
+        message(paste("Subfolder",input$folder_plot, 
+                      "already exists inside 'MITO_LAB_SC'."))
+      }
+      
+      plot_folder_path <- file.path(project_folder_path, plot_folder_name)
+      if (!dir.exists(plot_folder_path)) {
+        dir.create(plot_folder_path)
+        message("Subfolder 'plots' has been created inside 'MITO_LAB_SC'.")
+      } else {
+        message("Subfolder 'plots' already exists inside 'MITO_LAB_SC'.")
+      }
+      
+      obj <- readRDS(input$upload_plot$datapath)
+      
+      unique_clusters <- unique(obj@meta.data[[input$ident_plot]])
+      num_clusters <- length(unique_clusters)
+      colors <- brewer.pal(n = num_clusters, name = "Set3")
+      
+      #General UMAP
+      output$general_umap_plot <- renderPlot({
+        DimPlot_scCustom(obj, group.by = input$ident_plot, colors_use = colors, figure_plot = T)
+      })
+      #pdf(file = paste0(plot_folder_path,"umap.pdf"))
+        #DimPlot_scCustom(obj, group.by = input$ident_plot)
+      #dev.off()
+      
+      
+      
+  })
+  
+}
+```
+
+## MITO LAB SC Analyzer
+
+-   Everything will be saved to a MITO_LAB_SC folder that will be created on your desktop(the path to it will be '\~/Desktop/MITO_LAB_SC/')
+
+```{r}
+options(shiny.maxRequestSize = 10*1024^3)
+shinyApp(ui = ui, server = server)
+```
